@@ -15,22 +15,61 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
+      // Try OpenWeatherMap first
       const response = await fetch(
         `https://api.openweathermap.org/data/2.5/weather?q=${cityName}&appid=${API_KEY}&units=metric`
       );
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(`City "${cityName}" not found.`);
-        } else if (response.status === 401) {
-          throw new Error("Invalid API Key. Please update the API_KEY in App.jsx.");
-        } else {
-          throw new Error("Failed to fetch weather data. Please try again.");
-        }
+      if (response.ok) {
+        const data = await response.json();
+        setWeatherData(data);
+        return;
       }
 
-      const data = await response.json();
-      setWeatherData(data);
+      // If it fails with 401 (invalid key) or we don't have a working key, fallback to Open-Meteo API (No Key Required!)
+      console.log("OpenWeatherMap key failed, using free fallback API...");
+      
+      // Step 1: Geocode city name to get lat/lon
+      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${cityName}&count=1`);
+      const geoData = await geoRes.json();
+      
+      if (!geoData.results || geoData.results.length === 0) {
+        throw new Error(`City "${cityName}" not found.`);
+      }
+      
+      const { latitude, longitude, name, country_code } = geoData.results[0];
+      
+      // Step 2: Get weather data
+      const weatherRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=sunrise,sunset&timezone=auto`
+      );
+      const openMeteoData = await weatherRes.json();
+
+      // Step 3: Format data to exactly match OpenWeatherMap structure so our UI doesn't break
+      const current = openMeteoData.current;
+      const daily = openMeteoData.daily;
+      
+      // Very basic weather code mapping
+      let icon = "01d"; let desc = "clear sky";
+      if (current.weather_code >= 95) { icon = "11d"; desc = "thunderstorm"; }
+      else if (current.weather_code >= 61) { icon = "09d"; desc = "rain"; }
+      else if (current.weather_code >= 51) { icon = "09d"; desc = "drizzle"; }
+      else if (current.weather_code >= 45) { icon = "50d"; desc = "fog"; }
+      else if (current.weather_code >= 1) { icon = "02d"; desc = "cloudy"; }
+      
+      const mockOpenWeatherData = {
+        name: name,
+        sys: {
+          country: country_code || "Unknown",
+          sunrise: new Date(daily.sunrise[0]).getTime() / 1000,
+          sunset: new Date(daily.sunset[0]).getTime() / 1000
+        },
+        weather: [{ description: desc, icon: icon }],
+        main: { temp: current.temperature_2m, humidity: current.relative_humidity_2m },
+        wind: { speed: current.wind_speed_10m }
+      };
+
+      setWeatherData(mockOpenWeatherData);
     } catch (err) {
       setError(err.message);
       setWeatherData(null);
